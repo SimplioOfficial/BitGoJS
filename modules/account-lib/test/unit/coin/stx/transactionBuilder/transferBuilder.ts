@@ -202,6 +202,67 @@ describe('Stx Transfer Builder', () => {
       should.deepEqual(txJson.fee.toString(), '180');
     });
 
+    it('a transfer transaction signed multiple times with mid key no signer', async () => {
+      const builder = initTxBuilder();
+      builder.memo('test');
+      builder.sign({ key: testData.prv1 });
+     
+      builder.fromPubKey([testData.pub1, testData.pub2, testData.pub3]);
+      builder.numberSignatures(2);
+      const tx = await builder.build();
+      const txBuilder2 = factory.getTransferBuilder();
+      txBuilder2.from(tx.toBroadcastFormat());
+      txBuilder2.sign({ key: testData.prv3 });
+      //txBuilder2.fromPubKey([testData.pub1, testData.pub2, testData.pub3]);
+      const signedTx = await txBuilder2.build();
+      
+      const txJson = signedTx.toJson();
+      should.deepEqual(signedTx.toBroadcastFormat()
+      ,"808000000004012fe507c09dbb23c3b7e5d166c81fc4b87692510b000000000000000000000000000000b40000000302009473a37b914f703c81f33141d10eabe4550c4d61f113662cc11cdc0463fc377358408c73d3d3273cdbcc3511dbbd2031b5eaca4cb2b13925da9f9b0c7e64d1a600024abddd63b56c55cd1ed0803c26c473f5f0b9d8473b37b65bd812f035365f154b02016aac0347b8520d8905cbd13c601f45a0ccbbb24831320c54d9ee2c1e3656b76d75e1c527932267d80beb90257bbe2dc7184d9b168993ab3a40fa73be6973c5f5000203020000000000051a1ae3f911d8f1d46d7416bfbe4b593fd41eac19cb00000000000003e874657374000000000000000000000000000000000000000000000000000000000000"
+      );
+      
+      should.deepEqual(signedTx.signature.length, 2);
+      should.deepEqual(txJson.fee.toString(), '180');
+      should.deepEqual(txJson.payload.to, testData.TX_RECIEVER.address);
+      should.deepEqual(txJson.payload.memo, 'test');
+      should.deepEqual(txJson.payload.amount, '1000');
+    });
+
+    it('get pubkey of a transfer transaction signed', async () => {
+      const rawTx="808000000004012fe507c09dbb23c3b7e5d166c81fc4b87692510b000000000000000000000000000000b4000000030002b087ca52f40fdfdf4b16a0bbf7e91e4db2e183ac5c6491a5f60a5450e25de7d00201395ea034f45a3bb09d2a0bcf6f50e7f7f56250b36b1f77c6a3be99318b9aefde5dc25185ed592a8a8bfb6ccfe7f947705f3ac5d54179955bb005b422c3e1ac8b020150b8f5843709be0ab16050fbbbeb8f9566fb74f87cbde647bb7f55243be18f254c0934a1869049458cb7b994a756ef1685921d62cdd227bbc083238e7c6551ed0002030200000000000515927d48fbcc09fa69ed37c862a30295a8e6da39d800000000000003e874657374000000000000000000000000000000000000000000000000000000000000";
+      const txBuilder2:any = factory.getTransferBuilder();
+      txBuilder2.from(rawTx);
+      should.deepEqual(txBuilder2._fromPubKeys, [testData.pub1, testData.pub2, testData.pub3]);
+    });
+
+
+    it('a transfer transaction signed multiple times with first key no signer', async () => {
+      const builder = initTxBuilder();
+      builder.memo('test');
+      builder.sign({ key: testData.prv2 });
+     
+      builder.fromPubKey([testData.pub1, testData.pub2, testData.pub3]);
+      builder.numberSignatures(2);
+      const tx = await builder.build();
+      const txBuilder2 = factory.getTransferBuilder();
+      txBuilder2.from(tx.toBroadcastFormat());
+      txBuilder2.sign({ key: testData.prv3 });
+      //txBuilder2.fromPubKey([testData.pub1, testData.pub2, testData.pub3]);
+      const signedTx = await txBuilder2.build();
+      
+      const txJson = signedTx.toJson();
+      should.deepEqual(signedTx.toBroadcastFormat()
+      ,"808000000004012fe507c09dbb23c3b7e5d166c81fc4b87692510b000000000000000000000000000000b4000000030002b087ca52f40fdfdf4b16a0bbf7e91e4db2e183ac5c6491a5f60a5450e25de7d002000436f906d040388e3123eb9c37614d7f39da2f283385cda40997212acfa5b24d032fac8299ae9590fbd24d6398ac1c489b523c418d8c06b35467e685199877860201dba16d040f0af2fa8d4bf388cbc7f0cd7463aa7058c49f7e5db2d72d868d7167528cd8393369b94480f9b7f8a2c9087cbd57d4d1a782e553f9cede66642d12c9000203020000000000051a1ae3f911d8f1d46d7416bfbe4b593fd41eac19cb00000000000003e874657374000000000000000000000000000000000000000000000000000000000000"
+      );
+      
+      should.deepEqual(signedTx.signature.length, 2);
+      should.deepEqual(txJson.fee.toString(), '180');
+      should.deepEqual(txJson.payload.to, testData.TX_RECIEVER.address);
+      should.deepEqual(txJson.payload.memo, 'test');
+      should.deepEqual(txJson.payload.amount, '1000');
+    });
+
+
     describe('serialized transactions', () => {
       it('a non signed transfer transaction from serialized', async () => {
         const builder = factory.from(testData.RAW_TX_UNSIGNED);

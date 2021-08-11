@@ -12,6 +12,7 @@ import {
   publicKeyFromSignature,
   StacksMessageType,
   PubKeyEncoding,
+  TransactionSigner,
 } from '@stacks/transactions';
 import { StacksNetwork, StacksTestnet } from '@stacks/network';
 import { BaseTransactionBuilder } from '../baseCoin';
@@ -34,6 +35,7 @@ export abstract class TransactionBuilder extends BaseTransactionBuilder {
   protected _fee: BaseFee;
   protected _nonce: number;
   protected _memo: string;
+  protected _signaturesIndex: number[];
   protected _numberSignatures: number;
   protected _multiSignerKeyPairs: KeyPair[];
   protected _signatures: SignatureData[];
@@ -47,9 +49,10 @@ export abstract class TransactionBuilder extends BaseTransactionBuilder {
     this._fromPubKeys = [];
     this._sigHash = [];
     this._signatures = [];
+    this._signaturesIndex = [];
     this._numberSignatures = 2;
     this._network = new StacksTestnet();
-    this.transaction = new Transaction(_coinConfig);
+    this._transaction = new Transaction(_coinConfig);
   }
 
   /**
@@ -59,6 +62,14 @@ export abstract class TransactionBuilder extends BaseTransactionBuilder {
    */
   initBuilder(tx: Transaction): void {
     this.transaction = tx;
+    const spendingCondition = tx.stxTransaction.auth.spendingCondition;
+    if (spendingCondition) {
+      if (!isSingleSig(spendingCondition)) {
+        this._numberSignatures = spendingCondition.signaturesRequired;
+      } else {
+        this._numberSignatures = 1;
+      }
+    }
     const txData = tx.toJson();
     this.fee({ fee: txData.fee.toString() });
     this.nonce(txData.nonce);
@@ -80,7 +91,8 @@ export abstract class TransactionBuilder extends BaseTransactionBuilder {
       }
     } else {
       let curSignHash = tx.stxTransaction.verifyBegin();
-      tx.stxTransaction.auth.spendingCondition.fields.forEach((field) => {
+      this._signaturesIndex=[];
+      tx.stxTransaction.auth.spendingCondition.fields.forEach((field, index) => {
         if (field.contents.type === StacksMessageType.MessageSignature) {
           const signature = field.contents;
           this._signatures.push(signature);
@@ -95,6 +107,7 @@ export abstract class TransactionBuilder extends BaseTransactionBuilder {
           this._fromPubKeys.push(nextVerify.pubKey.data.toString('hex'));
           this._sigHash.push(nextVerify.nextSigHash);
           curSignHash = nextVerify.nextSigHash;
+          this._signaturesIndex.push(index);
         } else {
           this._fromPubKeys.push(field.contents.data.toString('hex'));
         }
@@ -110,14 +123,6 @@ export abstract class TransactionBuilder extends BaseTransactionBuilder {
       BufferReader.fromBuffer(Buffer.from(removeHexPrefix(rawTransaction), 'hex')),
     );
     tx.stxTransaction = stackstransaction;
-    const spendingCondition = stackstransaction.auth.spendingCondition;
-    if (spendingCondition) {
-      if (!isSingleSig(spendingCondition)) {
-        this._numberSignatures = spendingCondition.signaturesRequired;
-      } else {
-        this._numberSignatures = 1;
-      }
-    }
     this.initBuilder(tx);
     return this.transaction;
   }
@@ -127,18 +132,25 @@ export abstract class TransactionBuilder extends BaseTransactionBuilder {
   protected async buildImplementation(): Promise<Transaction> {
     this._transaction.stxTransaction.setFee(new BigNum(this._fee.fee));
     this._transaction.stxTransaction.setNonce(new BigNum(this._nonce));
+    
+    const signer = new TransactionSigner(this._transaction.stxTransaction);
+    signer.sigHash = this._sigHash.pop() ?? this._transaction.stxTransaction.verifyBegin();
+    for (var i:number=0 ; i < this._fromPubKeys.length; i++) {
+      var pubKey = this._fromPubKeys[i];
+      var signatureIndex = this._signaturesIndex.findIndex(index=>i===index);
+      if (signatureIndex >= 0) {
+        this.transaction.signWithSignatures([this._signatures[signatureIndex]], this._fromPubKeys);
+      } else {
+        var prvKey = this._multiSignerKeyPairs.filter(
+            kp=> kp.getKeys(true).pub === pubKey)
+        if (prvKey.length>0) {
+            await this.transaction.sign(prvKey, undefined, signer)
+        } else if (this._numberSignatures > 1) {
+            await this.transaction.appendOrigin([pubKey], signer)
+        }
+      }
+    }
 
-    if (this._signatures.length > 0) {
-      await this.transaction.signWithSignatures(this._signatures, this._fromPubKeys);
-    }
-    if (this._multiSignerKeyPairs.length > 0) {
-      await this.transaction.sign(this._multiSignerKeyPairs, this._sigHash.pop());
-    }
-    if (this._numberSignatures > 1) {
-      // multi-sig
-      const appendKeys = this._fromPubKeys.slice(this._multiSignerKeyPairs.length + this._signatures.length);
-      await this.transaction.appendOrigin(appendKeys);
-    }
     this._transaction.loadInputsAndOutputs();
     return this._transaction;
   }
