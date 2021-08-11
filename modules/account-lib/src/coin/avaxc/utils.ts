@@ -1,6 +1,9 @@
 import { NetworkType } from '@bitgo/statics';
-import { KeyPair } from '../eth';
+import EthereumCommon from '@ethereumjs/common';
+import { Utils, KeyPair } from '../eth';
 import { TxData } from '../eth/iface';
+import { InvalidTransactionError } from '../baseCoin/errors';
+import { testnetCommon, mainnetCommon } from './resources';
 
 /**
  * Signs the transaction using the appropriate algorithm
@@ -10,15 +13,21 @@ import { TxData } from '../eth/iface';
  * @returns {string} the transaction signed and encoded
  */
 export async function sign(transactionData: TxData, keyPair: KeyPair): Promise<any> {
-  // TODO
+  return Utils.signInternal(transactionData, keyPair, testnetCommon);
 }
+
+const commons: Map<NetworkType, EthereumCommon> = new Map<NetworkType, EthereumCommon>([
+  [NetworkType.MAINNET, mainnetCommon],
+  [NetworkType.TESTNET, testnetCommon],
+]);
 
 /**
  * @param network
  */
-export function getCommon(network: NetworkType): any {
-  // TODO
+export function getCommon(network: NetworkType): EthereumCommon {
+  const common = commons.get(network);
+  if (!common) {
+    throw new InvalidTransactionError('Missing network common configuration');
+  }
+  return common;
 }
-
-// TODO: add walletSimpleByteCode
-export const walletSimpleByteCode = '';
