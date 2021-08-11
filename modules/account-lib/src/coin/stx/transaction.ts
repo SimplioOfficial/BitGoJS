@@ -35,10 +35,10 @@ export class Transaction extends BaseTransaction {
     return true;
   }
 
-  async sign(keyPair: KeyPair[] | KeyPair, sigHash?: string, signer?: TransactionSigner ): Promise<void> {
+  async sign(keyPair: KeyPair[] | KeyPair, sigHash?: string, signer?: TransactionSigner): Promise<void> {
     const keyPairs = keyPair instanceof Array ? keyPair : [keyPair];
     signer = signer ?? new TransactionSigner(this._stxTransaction);
-    signer.checkOversign=false;
+    signer.checkOversign = false;
     if (sigHash) signer.sigHash = sigHash;
     for (const kp of keyPairs) {
       const keys = kp.getKeys(kp.getCompressed());
@@ -48,12 +48,11 @@ export class Transaction extends BaseTransaction {
       const privKey = createStacksPrivateKey(keys.prv);
       signer.signOrigin(privKey);
     }
-    //this._stxTransaction = signer.getTxInComplete();
   }
 
   async appendOrigin(pubKeyString: string[], optionalSigner?: TransactionSigner): Promise<void> {
-    const signer:TransactionSigner = optionalSigner ?? new TransactionSigner(this._stxTransaction);
-    signer.checkOversign=false;
+    const signer: TransactionSigner = optionalSigner ?? new TransactionSigner(this._stxTransaction);
+    signer.checkOversign = false;
     pubKeyString.forEach((pubKey) => {
       signer.appendOrigin(createStacksPublicKey(pubKey));
     });
@@ -163,7 +162,7 @@ export class Transaction extends BaseTransaction {
 
   private getNonce(): number {
     if (this._stxTransaction.auth.spendingCondition) {
-      return this._stxTransaction.auth.spendingCondition.nonce.toNumber();
+      return Number(this._stxTransaction.auth.spendingCondition.nonce);
     } else {
       throw new InvalidTransactionError('spending condition is null');
     }
