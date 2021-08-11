@@ -11,12 +11,15 @@
 // Copyright 2014, BitGo, Inc.  All Rights Reserved.
 //
 
+import * as bip32 from 'bip32';
 import * as bitcoin from '@bitgo/utxo-lib';
 import * as Bluebird from 'bluebird';
 import * as _ from 'lodash';
 
 import * as common from './common';
-import { getNetwork, makeRandomKey, hdPath } from './bitcoin';
+import { getNetwork, makeRandomKey } from './bitcoin';
+import { sanitizeLegacyPath } from './bip32path';
+import { getSharedSecret } from './ecdh';
 
 interface DecryptReceivedTravelRuleOptions {
   tx?: {
@@ -113,7 +116,6 @@ TravelRule.prototype.validateTravelInfo = function (info) {
  * Parameters:
  *   tx: a transaction object
  *   keychain: keychain object (with xprv)
- *   hdnode: a bitcoin.HDNode object (may be provided instead of keychain)
  * Returns:
  *   the tx object, augmented with decrypted travelInfo fields
  */
@@ -127,26 +129,15 @@ TravelRule.prototype.decryptReceivedTravelInfo = function (params: DecryptReceiv
     return tx;
   }
 
-  let hdNode;
-  // Passing in hdnode is faster because it doesn't reconstruct the key every time
-  if (params.hdnode) {
-    hdNode = params.hdnode;
-  } else {
-    const keychain = params.keychain;
-    if (!_.isObject(keychain) || !_.isString(keychain.xprv)) {
-      throw new Error('expecting keychain param with xprv');
-    }
-    hdNode = bitcoin.HDNode.fromBase58(keychain.xprv);
+  const keychain = params.keychain;
+  if (!_.isObject(keychain) || !_.isString(keychain.xprv)) {
+    throw new Error('expecting keychain param with xprv');
   }
+  const hdNode = bip32.fromBase58(keychain.xprv);
 
-  const self = this;
-  const hdPathNode = hdPath(hdNode);
-  tx.receivedTravelInfo.forEach(function (info) {
-    const key = hdPathNode.deriveKey(info.toPubKeyPath);
-    const secret = self.bitgo.getECDHSecret({
-      eckey: key,
-      otherPubKeyHex: info.fromPubKey,
-    });
+  tx.receivedTravelInfo.forEach((info) => {
+    const key = hdNode.derivePath(sanitizeLegacyPath(info.toPubKeyPath));
+    const secret = getSharedSecret(key, Buffer.from(info.fromPubKey, 'hex')).toString('hex');
     try {
       const decrypted = this.bitgo.decrypt({
         input: info.encryptedTravelInfo,
@@ -190,10 +181,7 @@ TravelRule.prototype.prepareParams = function (params) {
   }
 
   // Compute the shared key for encryption
-  const sharedSecret = this.bitgo.getECDHSecret({
-    eckey: fromKey,
-    otherPubKeyHex: recipient.pubKey,
-  });
+  const sharedSecret = getSharedSecret(fromKey, Buffer.from(recipient.pubKey, 'hex')).toString('hex');
 
   // JSON-ify and encrypt the payload
   const travelInfoJSON = JSON.stringify(travelInfo);

@@ -6,7 +6,8 @@
 
 import * as superagent from 'superagent';
 import * as bitcoin from '@bitgo/utxo-lib';
-import { makeRandomKey, hdPath } from './bitcoin';
+import { makeRandomKey } from './bitcoin';
+import * as bip32 from 'bip32';
 import * as secp256k1 from 'secp256k1';
 import bitcoinMessage = require('bitcoinjs-message');
 import { BaseCoin } from './v2/baseCoin';
@@ -45,6 +46,8 @@ import {
   toBitgoRequest,
   verifyResponse,
 } from './api';
+import { sanitizeLegacyPath } from './bip32path';
+import { getSharedSecret } from './ecdh';
 
 const debug = debugLib('bitgo:index');
 
@@ -505,49 +508,51 @@ export class BitGo {
         req = req.proxy(self._proxy);
       }
 
-      // intercept a request before it's submitted to the server for v2 authentication (based on token)
-      req.set('BitGo-SDK-Version', self.version());
-
-      if (!_.isUndefined(self._reqId)) {
-        req.set('Request-ID', self._reqId.toString());
-
-        // increment after setting the header so the sequence numbers start at 0
-        self._reqId.inc();
-
-        // request ids must be set before each request instead of being kept
-        // inside the bitgo object. This is to prevent reentrancy issues where
-        // multiple simultaneous requests could cause incorrect reqIds to be used
-        delete self._reqId;
-      }
-
-      // if there is no token, and we're not logged in, the request cannot be v2 authenticated
-      req.isV2Authenticated = true;
-      req.authenticationToken = self._token;
-      // some of the older tokens appear to be only 40 characters long
-      if ((self._token && self._token.length !== 67 && self._token.indexOf('v2x') !== 0) || req.forceV1Auth) {
-        // use the old method
-        req.isV2Authenticated = false;
-
-        req.set('Authorization', 'Bearer ' + self._token);
-        return toBitgoRequest(req);
-      }
-
-      req.set('BitGo-Auth-Version', self._authVersion === 3 ? '3.0' : '2.0');
-      // prevent IE from caching requests
-      req.set('If-Modified-Since', 'Mon, 26 Jul 1997 05:00:00 GMT');
-
-      if (!(process as any).browser) {
-        // If not in the browser, set the User-Agent. Browsers don't allow
-        // setting of User-Agent, so we must disable this when run in the
-        // browser (browserify sets process.browser).
-        req.set('User-Agent', self._userAgent);
-      }
-
-      // Set the request timeout to just above 5 minutes by default
-      req.timeout((process.env.BITGO_TIMEOUT as any) * 1000 || 305 * 1000);
-
       const originalThen = req.then.bind(req);
       req.then = (onfulfilled, onrejected) => {
+        // intercept a request before it's submitted to the server for v2 authentication (based on token)
+        req.set('BitGo-SDK-Version', self.version());
+
+        if (!_.isUndefined(self._reqId)) {
+          req.set('Request-ID', self._reqId.toString());
+
+          // increment after setting the header so the sequence numbers start at 0
+          self._reqId.inc();
+
+          // request ids must be set before each request instead of being kept
+          // inside the bitgo object. This is to prevent reentrancy issues where
+          // multiple simultaneous requests could cause incorrect reqIds to be used
+          delete self._reqId;
+        }
+
+        // prevent IE from caching requests
+        req.set('If-Modified-Since', 'Mon, 26 Jul 1997 05:00:00 GMT');
+
+        if (!(process as any).browser) {
+          // If not in the browser, set the User-Agent. Browsers don't allow
+          // setting of User-Agent, so we must disable this when run in the
+          // browser (browserify sets process.browser).
+          req.set('User-Agent', self._userAgent);
+        }
+
+        // Set the request timeout to just above 5 minutes by default
+        req.timeout((process.env.BITGO_TIMEOUT as any) * 1000 || 305 * 1000);
+
+        // if there is no token, and we're not logged in, the request cannot be v2 authenticated
+        req.isV2Authenticated = true;
+        req.authenticationToken = self._token;
+        // some of the older tokens appear to be only 40 characters long
+        if ((self._token && self._token.length !== 67 && self._token.indexOf('v2x') !== 0) || req.forceV1Auth) {
+          // use the old method
+          req.isV2Authenticated = false;
+
+          req.set('Authorization', 'Bearer ' + self._token);
+          debug('sending v1 %s request to %s with token %s', method, url, self._token?.substr(0, 8));
+          return originalThen(onfulfilled).catch(onrejected);
+        }
+
+        req.set('BitGo-Auth-Version', self._authVersion === 3 ? '3.0' : '2.0');
+
         if (self._token) {
           const data = serializeRequestData(req);
           setRequestQueryString(req);
@@ -562,6 +567,7 @@ export class BitGo {
 
           // we're not sending the actual token, but only its hash
           req.set('Authorization', 'Bearer ' + requestProperties.tokenHash);
+          debug('sending v2 %s request to %s with token %s', method, url, self._token?.substr(0, 8));
 
           // set the HMAC
           req.set('HMAC', requestProperties.hmac);
@@ -823,7 +829,7 @@ export class BitGo {
     const shards = _.zipWith(secrets, passwords, (shard, password) => {
       return this.encrypt({ input: shard, password });
     });
-    const node = bitcoin.HDNode.fromSeedHex(seed);
+    const node = bip32.fromSeed(Buffer.from(seed, 'hex'));
     return {
       xpub: node.neutered().toBase58(),
       m,
@@ -853,7 +859,7 @@ export class BitGo {
       return this.decrypt({ input: shard, password });
     });
     const seed: string = shamir.combine(secrets);
-    const node = bitcoin.HDNode.fromSeedHex(seed);
+    const node = bip32.fromSeed(Buffer.from(seed, 'hex'));
     return {
       xpub: node.neutered().toBase58() as string,
       xprv: node.toBase58() as string,
@@ -923,7 +929,7 @@ export class BitGo {
       return false;
     }
     const seed = _.first(uniqueSeeds);
-    const node = bitcoin.HDNode.fromSeedHex(seed);
+    const node = bip32.fromSeed(Buffer.from(seed, 'hex'));
     const restoredXpub = node.neutered().toBase58();
 
     if (!_.isUndefined(xpub)) {
@@ -939,7 +945,7 @@ export class BitGo {
   }
 
   /**
-   * Construct an ECDH secret from a private key and other user's public key
+   * @deprecated - use `getSharedSecret()`
    */
   getECDHSecret({ otherPubKeyHex, eckey }: GetEcdhSecretOptions): string {
     if (!_.isString(otherPubKeyHex)) {
@@ -949,16 +955,7 @@ export class BitGo {
       throw new Error('eckey object required');
     }
 
-    const otherKeyPub = Buffer.from(otherPubKeyHex, 'hex');
-    const secretPoint = (eckey as bitcoin.ECPair).d.toBuffer(32);
-    return Buffer.from(
-      // FIXME(BG-34386): we should use `secp256k1.ecdh()` in the future
-      //                  see discussion here https://github.com/bitcoin-core/secp256k1/issues/352
-      secp256k1.publicKeyTweakMul(otherKeyPub, secretPoint)
-    )
-    // this implementation does not include the parity byte
-      .slice(1)
-      .toString('hex');
+    return getSharedSecret(eckey, Buffer.from(otherPubKeyHex, 'hex')).toString('hex');
   }
 
   /**
@@ -1007,6 +1004,7 @@ export class BitGo {
    * Synchronous method for activating an access token.
    */
   authenticateWithAccessToken({ accessToken }: AccessTokenOptions): void {
+    debug('now authenticating with access token %s', accessToken.substring(0, 8));
     this._token = accessToken;
   }
 
@@ -1040,16 +1038,19 @@ export class BitGo {
     }
 
     // construct HDNode objects for client's xprv and server's xpub
-    const clientHDNode = bitcoin.HDNode.fromBase58(ecdhXprv);
-    const serverHDNode = bitcoin.HDNode.fromBase58(serverXpub);
+    const clientHDNode = bip32.fromBase58(ecdhXprv);
+    const serverHDNode = bip32.fromBase58(serverXpub);
 
     // BIP32 derivation path is applied to both client and server master keys
-    const derivationPath = responseBody.derivationPath;
-    const clientDerivedNode = hdPath(clientHDNode).derive(derivationPath);
-    const serverDerivedNode = hdPath(serverHDNode).derive(derivationPath);
+    const derivationPath = sanitizeLegacyPath(responseBody.derivationPath);
+    const clientDerivedNode = clientHDNode.derivePath(derivationPath);
+    const serverDerivedNode = serverHDNode.derivePath(derivationPath);
 
-    const publicKey = serverDerivedNode.keyPair.getPublicKeyBuffer();
-    const secretKey = clientDerivedNode.keyPair.d.toBuffer(32);
+    const publicKey = serverDerivedNode.publicKey;
+    const secretKey = clientDerivedNode.privateKey;
+    if (!secretKey) {
+      throw new Error('no client private Key');
+    }
     const secret = Buffer.from(
       // FIXME(BG-34386): we should use `secp256k1.ecdh()` in the future
       //                  see discussion here https://github.com/bitcoin-core/secp256k1/issues/352
@@ -1223,6 +1224,7 @@ export class BitGo {
         request.forceV1Auth = true;
         // tell the server that the client was forced to downgrade the authentication protocol
         authParams.forceV1Auth = true;
+        debug('forcing v1 auth for call to authenticate');
       }
       const response: superagent.Response = await request.send(authParams);
       // extract body and user information
@@ -1471,12 +1473,13 @@ export class BitGo {
       if (!this._ecdhXprv) {
         // without a private key, the user cannot decrypt the new access token the server will send
         request.forceV1Auth = true;
+        debug('forcing v1 auth for adding access token using token %s', this._token?.substr(0, 8));
       }
 
       const response = await request.send(params);
       if (request.forceV1Auth) {
         (response as any).body.warning = 'A protocol downgrade has occurred because this is a legacy account.';
-        return response;
+        return handleResponseResult()(response);
       }
 
       // verify the authenticity of the server's response before proceeding any further

@@ -1,6 +1,7 @@
 /**
  * @prettier
  */
+import * as bip32 from 'bip32';
 import { Codes } from '@bitgo/unspents';
 import { UnspentType } from '@bitgo/unspents/dist/codes';
 import * as bitcoin from '@bitgo/utxo-lib';
@@ -11,7 +12,6 @@ import * as debugLib from 'debug';
 import * as _ from 'lodash';
 import * as request from 'superagent';
 
-import { hdPath } from '../../bitcoin';
 import { BitGo } from '../../bitgo';
 import * as config from '../../config';
 import * as errors from '../../errors';
@@ -95,6 +95,11 @@ export interface UtxoNetwork {
   scriptHash: number;
   altScriptHash?: number;
   bech32: string;
+  wif: number;
+  bip32: {
+    public: number;
+    private: number;
+  };
 }
 
 export interface ParsedSignatureScript {
@@ -375,8 +380,7 @@ export abstract class AbstractUtxoCoin extends BaseCoin {
    */
   isValidPub(pub: string) {
     try {
-      bitcoin.HDNode.fromBase58(pub);
-      return true;
+      return bip32.fromBase58(pub).isNeutered();
     } catch (e) {
       return false;
     }
@@ -1066,9 +1070,9 @@ export abstract class AbstractUtxoCoin extends BaseCoin {
       derivationIndex = index;
     }
 
-    const path = 'm/0/0/' + derivationChain + '/' + derivationIndex;
+    const path = '0/0/' + derivationChain + '/' + derivationIndex;
     const hdNodes = keychains.map(({ pub }) => bitcoin.HDNode.fromBase58(pub));
-    const derivedKeys = hdNodes.map((hdNode) => hdPath(hdNode).deriveKey(path).getPublicKeyBuffer());
+    const derivedKeys = hdNodes.map((hdNode) => hdNode.derivePath(path).keyPair.getPublicKeyBuffer());
 
     const { outputScript, redeemScript, witnessScript, address } = this.createMultiSigAddress(
       addressType,
@@ -1140,7 +1144,6 @@ export abstract class AbstractUtxoCoin extends BaseCoin {
       }
       debug(`Here is the public key of the xprv you used to sign: ${keychain.neutered().toBase58()}`);
 
-      const keychainHdPath = hdPath(keychain);
       const txb = bitcoin.TransactionBuilder.fromTransaction(transaction, self.network);
       self.prepareTransactionBuilder(txb);
 
@@ -1149,7 +1152,7 @@ export abstract class AbstractUtxoCoin extends BaseCoin {
         return {
           inputIndex: index,
           unspent: currentUnspent,
-          path: 'm/0/0/' + currentUnspent.chain + '/' + currentUnspent.index,
+          path: '0/0/' + currentUnspent.chain + '/' + currentUnspent.index,
           isP2wsh: !currentUnspent.redeemScript,
           isBitGoTaintedUnspent: self.isBitGoTaintedUnspent(currentUnspent),
           error: undefined as Error | undefined,
@@ -1169,7 +1172,7 @@ export abstract class AbstractUtxoCoin extends BaseCoin {
           );
           continue;
         }
-        const privKey = keychainHdPath.deriveKey(signatureContext.path);
+        const privKey = keychain.derivePath(signatureContext.path).keyPair;
         privKey.network = self.network;
 
         debug('Input details: %O', signatureContext);
@@ -1808,94 +1811,12 @@ export abstract class AbstractUtxoCoin extends BaseCoin {
   }
 
   /**
-   * Derive child keys at specific index, from provided parent keys
-   * @param {bitcoin.HDNode[]} keyArray
-   * @param {number} index
-   * @returns {bitcoin.HDNode[]}
-   */
-  deriveKeys(keyArray: bitcoin.HDNode[], index: number) {
-    return keyArray.map((k) => k.derive(index));
-  }
-
-  /**
    * Builds a funds recovery transaction without BitGo
    * @param params - {@see recover}
    * @param callback
    */
   recover(params: RecoverParams, callback?: NodeCallback<any>): Bluebird<any> {
-    return Bluebird.resolve(recover(this, params)).asCallback(callback);
-  }
-
-  /**
-   * Apply signatures to a funds recovery transaction using user + backup key
-   * @param txb {Object} a transaction builder object (with inputs and outputs)
-   * @param unspents {Array} the unspents to use in the transaction
-   * @param addresses {Array} the address and redeem script info for the unspents
-   * @param cosign {Boolean} whether to cosign this transaction with the user's backup key (false if KRS recovery)
-   * @returns the transaction builder originally passed in as the first argument
-   */
-  signRecoveryTransaction(txb: any, unspents: Output[], addresses: any, cosign: boolean): any {
-    interface SignatureIssue {
-      inputIndex: number;
-      unspent: Output;
-      error: Error | null;
-    }
-
-    const signatureIssues: SignatureIssue[] = [];
-    unspents.forEach((unspent, i) => {
-      const address = addresses[unspent.address];
-      const backupPrivateKey = address.backupKey.keyPair;
-      const userPrivateKey = address.userKey.keyPair;
-      // force-override networks
-      backupPrivateKey.network = this.network;
-      userPrivateKey.network = this.network;
-
-      const currentSignatureIssue: SignatureIssue = {
-        inputIndex: i,
-        unspent: unspent,
-        error: null,
-      };
-
-      if (cosign) {
-        try {
-          txb.sign(
-            i,
-            backupPrivateKey,
-            address.redeemScript,
-            this.defaultSigHashType,
-            unspent.amount,
-            address.witnessScript
-          );
-        } catch (e) {
-          currentSignatureIssue.error = e;
-          signatureIssues.push(currentSignatureIssue);
-        }
-      }
-
-      try {
-        txb.sign(
-          i,
-          userPrivateKey,
-          address.redeemScript,
-          this.defaultSigHashType,
-          unspent.amount,
-          address.witnessScript
-        );
-      } catch (e) {
-        currentSignatureIssue.error = e;
-        signatureIssues.push(currentSignatureIssue);
-      }
-    });
-
-    if (signatureIssues.length > 0) {
-      const failedIndices = signatureIssues.map((currentIssue) => currentIssue.inputIndex);
-      const error: any = new Error(`Failed to sign inputs at indices ${failedIndices.join(', ')}`);
-      error.code = 'input_signature_failure';
-      error.signingErrors = signatureIssues;
-      throw error;
-    }
-
-    return txb;
+    return Bluebird.resolve(recover(this, this.bitgo, params)).asCallback(callback);
   }
 
   /**
