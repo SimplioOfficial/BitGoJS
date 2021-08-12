@@ -55,6 +55,10 @@ export function getMainnet(network: Network): Network {
     case networks.zcash:
     case networks.zcashTest:
       return networks.zcash;
+    case networks.digibyte:
+      return networks.digibyte
+    case networks.dogecoin:
+      return networks.dogecoin
   }
   throw new TypeError(`invalid network`);
 }
@@ -176,6 +180,22 @@ export function isZcash(network) {
  * @param {Network} network
  * @returns {boolean} returns true iff network is any of the network stated in the argument
  */
+function isDigibyte(network) {
+  return getMainnet(network) === networks.digibyte;
+}
+
+/**
+ * @param {Network} network
+ * @returns {boolean} returns true iff network is any of the network stated in the argument
+ */
+function isDogeCoin(network) {
+  return getMainnet(network) === networks.dogecoin;
+}
+
+/**
+ * @param {Network} network
+ * @returns {boolean} returns true iff network is any of the network stated in the argument
+ */
 export const isValidNetwork = typeforce.oneOf(
   isBitcoin,
   isBitcoinCash,
@@ -183,7 +203,9 @@ export const isValidNetwork = typeforce.oneOf(
   isBitcoinSV,
   isDash,
   isLitecoin,
-  isZcash
+  isZcash,
+  isDigibyte,
+  isDogeCoin
 );
 
 /** @deprecated */
@@ -200,3 +222,7 @@ export const DASH = coins.DASH;
 export const LTC = coins.LTC;
 /** @deprecated */
 export const ZEC = coins.ZEC;
+export const DGB = coins.DGB;
+
+export const DOGE = coins.DOGE;
+

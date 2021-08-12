@@ -13,6 +13,8 @@ export const coins = {
   LTC: 'ltc',
   ZEC: 'zec',
   DASH: 'dash',
+  DOGE: 'doge',
+  DGB: 'dgb'
 } as const;
 
 /** @deprecated */
@@ -34,7 +36,9 @@ export type NetworkName =
   | 'litecoin'
   | 'litecoinTest'
   | 'zcash'
-  | 'zcashTest';
+  | 'zcashTest'
+  | 'digibyte'
+  | 'dogecoin';
 
 export type Network = {
   messagePrefix: string;

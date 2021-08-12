@@ -203,6 +203,28 @@ const networks: Record<NetworkName, Network> & Record<'zcash' | 'zcashTest', Zca
     },
     coin: coins.ZEC,
   },
+  digibyte: {
+    messagePrefix: '\x19DigiByte Signed Message:\n',
+    bip32: getDefaultBip32Mainnet(),
+    pubKeyHash: 0x1e,
+    scriptHash: 0x05,
+    wif: 0x2e,
+    coin: coins.DGB,
+  },
+  dogecoin: {
+    messagePrefix: '\x19Dogecoin Signed Message:\n',
+    bip32: {
+      // base58 'xpub'
+      public: 0x02facafd,
+      // base58 'xprv'
+      private: 0xfac398
+    },
+    pubKeyHash: 0x1e,
+    scriptHash: 0x16,
+    wif: 0x9e,
+    coin: coins.DOGE
+  },
+
 };
 
 export = networks;
